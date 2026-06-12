@@ -30,6 +30,7 @@ import {_isLinux, _isMac, _isWindows} from "~/common/windows.ts";
 import {Extension} from "@codemirror/state";
 import {getLanguage} from "~/components/editor/languages.ts";
 import {useI18n} from "vue-i18n";
+import JsonTreeEditor from "~/components/editor/JsonTreeEditor.vue";
 
 type ContentFormatType = 'text' | 'blob'
 type ConsoleType = 'info' | 'warn' | 'error' | 'none'
@@ -79,6 +80,64 @@ const languageSelectionBoxRef = ref()
 
 const content = ref<string>(props.value)
 const propsConfig = ref(props.config!)
+
+type ViewMode = 'text' | 'tree'
+const viewMode = ref<ViewMode>('text')
+const jsonTreeEditorRef = ref<InstanceType<typeof JsonTreeEditor>>()
+
+//  当前语言是否为 JSON（kubernetes 也映射为 json 高亮）
+const isJsonLanguage = computed<boolean>(() => {
+  const lang = EditorMappedLanguage[props.config?.language] || props.config?.language
+  return lang === 'json'
+})
+
+const isDarkTheme = computed<boolean>(() => useTheme().global.name.value === 'dark')
+
+//  切换视图模式（文本 <-> 树形）
+const switchViewMode = (mode: ViewMode) => {
+  if (mode === viewMode.value) {
+    return
+  }
+  showLanguageSelection.value = false
+  //  文本 -> 树形：校验当前内容是否为合法 JSON，非法则阻止切换并提示
+  if (viewMode.value === 'text' && mode === 'tree') {
+    const text = content.value.trim()
+    if (text.length > 0) {
+      try {
+        JSON.parse(text)
+      } catch (e) {
+        openConsolePanel('error', (e as Error).toString(), t('component.editor.invalidJsonForTree'))
+        return
+      }
+    }
+  }
+  //  树形 -> 文本：将树形编辑器的内容回写到 content
+  if (viewMode.value === 'tree' && mode === 'text') {
+    if (jsonTreeEditorRef.value) {
+      const treeContent = jsonTreeEditorRef.value.readDataString()
+      if (treeContent !== content.value) {
+        content.value = treeContent
+        onChanged(treeContent)
+      }
+    }
+  }
+  viewMode.value = mode
+}
+
+//  当语言切换到非 JSON 时，强制回到文本模式
+watch(
+    () => isJsonLanguage.value,
+    (isJson) => {
+      if (!isJson && viewMode.value === 'tree') {
+        switchViewMode('text')
+      }
+    }
+)
+
+const onTreeChanged = (payload: { data: string, modified: boolean }) => {
+  content.value = payload.data
+  emits('change', payload)
+}
 
 const tauriBlurUnListen = ref<Function>()
 
@@ -300,10 +359,19 @@ const openConsolePanel = (type: ConsoleType, content: string, title?: string) =>
   consolePanelData.show = true
 }
 
+//  在树形模式下，将树形编辑器的最新内容同步到 content
+const syncContentFromTree = () => {
+  if (viewMode.value === 'tree' && jsonTreeEditorRef.value) {
+    const treeContent = jsonTreeEditorRef.value.readDataString()
+    content.value = treeContent
+  }
+}
+
 /**
  * 将当前内容读出为 byte 数组
  */
 const readDataBytes = (): number[] => {
+  syncContentFromTree()
   if (propsConfig.value.language == 'blob') {
     return _strArrToNumArr(content.value.trim().split(/\s+/))
   } else {
@@ -312,6 +380,7 @@ const readDataBytes = (): number[] => {
 }
 
 const readDataString = (): string => {
+  syncContentFromTree()
   return content.value
 }
 
@@ -328,6 +397,7 @@ defineExpose({
     <div class="editor d-flex flex-column">
       <div :style="`height:${consolePanelData.show ? 'calc(100% - 250px)' : '100%'};`">
         <codemirror
+            v-show="viewMode === 'text'"
             v-model="content"
             :extensions="extensions"
             style="height: 100%;"
@@ -338,6 +408,14 @@ defineExpose({
             @ready="handleReady"
             @change="onChanged"
             @keydown="onKeyDown"
+        />
+        <json-tree-editor
+            v-if="viewMode === 'tree'"
+            ref="jsonTreeEditorRef"
+            :value="content"
+            :read-only="config.disabled"
+            :dark-theme="isDarkTheme"
+            @change="onTreeChanged"
         />
       </div>
       <div class="console-panel border-t-md"
@@ -363,6 +441,15 @@ defineExpose({
     <div class="footer">
       <slot name="footer"/>
       <span class="editor-footer-item"><strong class="editor-item-label">{{ t('common.size') }}</strong>: {{ size }}</span>
+      <span class="editor-footer-item" v-if="isJsonLanguage">
+        <span class="text-primary cursor-pointer user-select-none"
+              :title="viewMode === 'tree' ? t('component.editor.textMode') : t('component.editor.treeMode')"
+              @click="switchViewMode(viewMode === 'tree' ? 'text' : 'tree')"
+        >
+          <v-icon>{{ viewMode === 'tree' ? 'mdi-code-braces' : 'mdi-file-tree-outline' }}</v-icon>
+          {{ viewMode === 'tree' ? t('component.editor.textMode') : t('component.editor.treeMode') }}
+        </span>
+      </span>
       <span class="editor-footer-item">
         <span class="text-primary cursor-pointer user-select-none"
               @click="showLanguageSelection = !showLanguageSelection"

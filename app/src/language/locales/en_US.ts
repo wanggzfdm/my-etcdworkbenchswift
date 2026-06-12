@@ -104,6 +104,9 @@ export default {
         editor: {
             formatError: "Formatting Error",
             format: "Format",
+            treeMode: "Tree Edit",
+            textMode: "Text Edit",
+            invalidJsonForTree: "The current content is not valid JSON and cannot switch to tree edit mode.",
         }
     },
     main: {
@@ -251,6 +254,7 @@ export default {
             addMonitorBtnTitle: "Add to monitor list",
             versionDiff: "Version Diff",
             copyAndSave: "Copy and Save",
+            copyKey: "Copy Key",
             rename: "Rename",
             k8sFormatNotice: "The kubernetes storage format is protobuf and is automatically formatted into a <strong>readonly</strong> json format.",
             grantedTtl: "Granted TTL",

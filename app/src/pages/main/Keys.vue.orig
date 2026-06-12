@@ -1242,7 +1242,6 @@ const searchFromServer = _debounce(() => {
 
     if (data) {
       addDataListToTree(data.results, true)
-      kvTree.value?.expandAll(true)
     }
   }).finally(() => {
     searchDialog.loading = false

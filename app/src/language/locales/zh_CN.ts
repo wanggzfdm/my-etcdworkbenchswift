@@ -104,6 +104,9 @@ export default {
         editor: {
             formatError: "格式化错误",
             format: "格式化",
+            treeMode: "树形编辑",
+            textMode: "文本编辑",
+            invalidJsonForTree: "当前内容不是合法的 JSON，无法切换到树形编辑模式。",
         }
     },
     main: {
@@ -253,6 +256,7 @@ export default {
             addMonitorBtnTitle: "添加到监视列表",
             versionDiff: "版本对比",
             copyAndSave: "复制并保存",
+            copyKey: "复制键",
             rename: "重命名",
             k8sFormatNotice: "Kubernetes 存储原格式为 protobuf，已自动格式化为<strong>只读</strong>的 json 格式。",
             grantedTtl: "授予时间(TTL)",

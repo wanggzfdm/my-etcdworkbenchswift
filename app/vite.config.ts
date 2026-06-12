@@ -48,6 +48,7 @@ export default defineConfig(async () => ({
         }
     },
     optimizeDeps: {
-        include: ['jquery']
+        include: ['jquery'],
+        exclude: ['v-code-diff']
     }
 }));

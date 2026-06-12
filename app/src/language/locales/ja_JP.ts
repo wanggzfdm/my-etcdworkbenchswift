@@ -104,6 +104,9 @@ export default {
         editor: {
             formatError: "フォーマットエラー",
             format: "形式化",
+            treeMode: "ツリー編集",
+            textMode: "テキスト編集",
+            invalidJsonForTree: "現在の内容は有効な JSON ではないため、ツリー編集モードに切り替えできません。",
         }
     },
     main: {
@@ -253,6 +256,7 @@ export default {
             addMonitorBtnTitle: "モニターリストに追加",
             versionDiff: "バージョン比較",
             copyAndSave: "コピーして保存",
+            copyKey: "キーをコピー",
             rename: "名前変更",
             k8sFormatNotice: "Kubernetesのprotobuf形式データを<strong>読み取り専用</strong>のjson形式に自動変換しました。",
             grantedTtl: "付与時間(TTL)",

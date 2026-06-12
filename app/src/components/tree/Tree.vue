@@ -132,7 +132,7 @@ const beforeClick = (_treeId: string, treeNode: TreeNode) => {
     return false;
   }
   if (treeNode.isParent) {
-    treeRootObj.value.expandNode(treeNode)
+    treeRootObj.value.expandNode(treeNode);
     return false;
   }
   return treeNode.id != triggerRemovedKey.value;
@@ -144,6 +144,26 @@ const onClick = (_e: MouseEvent, _treeId: string, treeNode: TreeNode) => {
   }
   if (!props.enableSelect) {
     treeRootObj.value.cancelSelectedNode(treeNode)
+  }
+}
+
+const onExpand = (_event: any, _treeId: string, treeNode: TreeNode) => {
+  if (!treeNode.tId) {
+    return
+  }
+  const liElement = document.getElementById(treeNode.tId);
+  if (liElement) {
+    liElement.classList.add('open');
+  }
+}
+
+const onCollapse = (_event: any, _treeId: string, treeNode: TreeNode) => {
+  if (!treeNode.tId) {
+    return
+  }
+  const liElement = document.getElementById(treeNode.tId);
+  if (liElement) {
+    liElement.classList.remove('open');
   }
 }
 
@@ -391,6 +411,8 @@ const settings = {
   view: {
     nameIsHTML: true, //  允许name支持html
     nodeClasses: {add: ['tree-item']},
+    expandSpeed: "", //  禁用默认展开动画
+    animate: false, //  禁用动画效果
     showLine: false,
     dblClickExpand: false,
     selectedMulti: false,
@@ -402,7 +424,9 @@ const settings = {
   callback: {
     beforeClick: beforeClick,
     onClick: onClick,
-    onRightClick: props.enableContextmenu ? onRightClick : undefined
+    onRightClick: props.enableContextmenu ? onRightClick : undefined,
+    onExpand: onExpand,
+    onCollapse: onCollapse,
   },
   check: {
     enable: true
@@ -710,14 +734,60 @@ $--expand-icon-margin: 3px;
 }
 
 .key-tree {
-  .tree-item {
-    user-select: none;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
   $--tree-item-height: 30px;
+
+  li {
+    line-height: $--tree-item-height;
+    list-style-type: none;
+    white-space: nowrap;
+    outline: none;
+
+    /* 展开动画样式 */
+    ul {
+      margin: 0;
+      position: relative;
+      padding: 0 0 0 20px;
+      overflow: hidden;
+      max-height: 0;
+      opacity: 0;
+      transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+    }
+
+    /* 展开状态 */
+    &.open > ul {
+      max-height: 1000px;
+      opacity: 1;
+    }
+
+    span {
+      height: $--tree-item-height;
+      line-height: $--tree-item-height;
+    }
+
+    span.button.ico_close,
+    span.button.ico_open,
+    span.button.ico_docu {
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+
+    a,
+    a.curSelectedNode {
+      height: $--tree-item-height;
+      padding-top: 0;
+      border: none;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    a:hover {
+      text-decoration: none;
+    }
+
+    .tree-node-icon {
+      margin: 0 0 0 5px;
+    }
+  }
 
   .roots_docu:before,
   .roots_docu:after,
@@ -857,113 +927,6 @@ $--expand-icon-margin: 3px;
   .button.bottom_open:before,
   .button.center_open:before {
     transform: rotateZ(90deg);
-  }
-
-  li {
-    line-height: $--tree-item-height;
-    list-style-type: none;
-    white-space: nowrap;
-    outline: none;
-
-    ul {
-      margin: 0;
-      position: relative;
-      padding: 0 0 0 20px;
-    }
-
-    span {
-      height: $--tree-item-height;
-      line-height: $--tree-item-height;
-    }
-
-    span.button.ico_close,
-    span.button.ico_open,
-    span.button.ico_docu {
-      margin-right: 5px;
-      vertical-align: middle;
-    }
-
-    a,
-    a.curSelectedNode {
-      height: $--tree-item-height;
-      padding-top: 0;
-      border: none;
-      text-decoration: none;
-      cursor: pointer;
-    }
-
-    a:hover {
-      text-decoration: none;
-    }
-
-    .tree-node-icon {
-      margin: 0 0 0 5px;
-    }
-  }
-}
-
-.v-theme--dark {
-
-  .search-icon {
-    color: $--search-black-border-color;
-  }
-
-  .search-input {
-    border-color: $--search-black-border-color;
-  }
-
-  .tree-item {
-    color: #a29b9b;
-  }
-
-  .key-tree {
-    li {
-      a {
-        color: rgba(255, 255, 255, 0.7);
-      }
-
-      a.curSelectedNode {
-        color: white;
-        font-weight: bold;
-      }
-
-      a:hover {
-        text-decoration: none;
-        color: white;
-      }
-    }
-  }
-}
-
-.v-theme--light {
-
-  .search-icon {
-    color: $--search-white-border-color;
-  }
-
-  .search-input {
-    border-color: $--search-white-border-color;
-  }
-
-  .tree-item {
-    color: black;
-  }
-
-  .key-tree {
-    li {
-      a {
-        color: rgba(0, 0, 0, 0.7);
-      }
-
-      a.curSelectedNode {
-        color: black;
-        font-weight: bold;
-      }
-
-      a:hover {
-        color: black;
-      }
-    }
   }
 }
 

@@ -14,3 +14,15 @@
 **/__pycache__/
 
 **/.env
+
+# macOS
+**/.DS_Store
+
+# Swift / Xcode build artifacts (regenerable)
+macos-swift/.build/
+macos-swift/.swiftpm/
+macos-swift/.backups/
+**/*.xcuserstate
+
+# Xcode Instruments traces
+*.trace/
