@@ -192,7 +192,8 @@ struct KeyOutlineView: NSViewRepresentable {
                 signature = newSignature
                 outline.reloadData()
                 if expandAll {
-                    outline.expandItem(nil, expandChildren: true)
+                    // reloadData 后用递归逐节点展开，确保所有层级都被展开
+                    expandAllNodes(in: roots, outline: outline)
                 } else {
                     restoreExpanded(expanded)
                 }
@@ -200,14 +201,25 @@ struct KeyOutlineView: NSViewRepresentable {
             } else if expandAll != didExpandAll {
                 // 结构未变但搜索态切换：展开全部 / 折叠全部
                 if expandAll {
-                    outline.expandItem(nil, expandChildren: true)
+                    expandAllNodes(in: roots, outline: outline)
                 } else {
                     outline.collapseItem(nil, collapseChildren: true)
                 }
                 didExpandAll = expandAll
+            } else if expandAll && didExpandAll {
+                // 搜索态未切换但仍在搜索中（如持续输入），确保新节点也被展开
+                expandAllNodes(in: roots, outline: outline)
             }
 
             syncSelection(to: selectedKey)
+        }
+
+        /// 递归展开所有非叶子节点，比 expandItem(nil, expandChildren: true) 更可靠
+        private func expandAllNodes(in nodes: [KeyOutlineNode], outline: NSOutlineView) {
+            for node in nodes where !node.isLeaf {
+                outline.expandItem(node, expandChildren: false)
+                expandAllNodes(in: node.children, outline: outline)
+            }
         }
 
         private func syncSelection(to selectedKey: String?) {

@@ -6,5 +6,10 @@
     <string>icon</string>
     <key>CFBundleIconName</key>
     <string>icon</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
 </dict>
 </plist>

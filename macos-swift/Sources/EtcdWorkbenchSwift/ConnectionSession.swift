@@ -16,10 +16,10 @@ final class ConnectionSession: ObservableObject, Identifiable {
     @Published var errorMessage: String?
     @Published var activeConnectionName: String?
     @Published var canLoadMore = false
+    @Published var activePrefix: String = ""
 
     private var client: EtcdHTTPClient?
     private var nextCursor: String?
-    private var activePrefix = ""
     private let pageSize = 500
 
     init(config: ConnectionConfig) {

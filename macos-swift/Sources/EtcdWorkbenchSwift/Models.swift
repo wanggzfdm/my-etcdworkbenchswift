@@ -10,6 +10,7 @@ struct ConnectionConfig: Codable, Identifiable, Equatable {
     var password: String
     var useTLS: Bool
     var skipTLSVerify: Bool
+    var keyPrefix: String
 
     var baseURL: URL? {
         var components = URLComponents()
@@ -28,7 +29,8 @@ struct ConnectionConfig: Codable, Identifiable, Equatable {
         username: "",
         password: "",
         useTLS: false,
-        skipTLSVerify: false
+        skipTLSVerify: false,
+        keyPrefix: ""
     )
 }
 

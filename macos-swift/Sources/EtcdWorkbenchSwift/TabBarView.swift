@@ -5,10 +5,14 @@ import SwiftUI
 struct WorkspaceTabBar: View {
     @ObservedObject var workspace: AppViewModel
     var onNewTab: () -> Void
+    var onGoHome: () -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                homeButton
+                Divider()
+                    .frame(height: 20)
                 ForEach(workspace.sessions) { session in
                     tab(session)
                 }
@@ -19,6 +23,34 @@ struct WorkspaceTabBar: View {
         }
         .frame(height: 40)
         .background(Color.secondary.opacity(0.06))
+    }
+
+    private var homeButton: some View {
+        let isHomeActive = workspace.showHome
+        return Button {
+            onGoHome()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "house")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("首页")
+                    .font(.callout)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(isHomeActive ? .primary : .secondary)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isHomeActive ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(isHomeActive ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("回到首页选择连接")
     }
 
     private var newTabButton: some View {
@@ -49,7 +81,7 @@ struct WorkspaceTabBar: View {
     }
 
     private func tab(_ session: ConnectionSession) -> some View {
-        let isActive = workspace.activeSession?.id == session.id
+        let isActive = !workspace.showHome && workspace.activeSession?.id == session.id
         return HStack(spacing: 6) {
             Image(systemName: "server.rack")
                 .font(.system(size: 10))
@@ -82,6 +114,7 @@ struct WorkspaceTabBar: View {
         .contentShape(Rectangle())
         .onTapGesture {
             workspace.activate(session.id)
+            workspace.showHome = false
         }
     }
 }

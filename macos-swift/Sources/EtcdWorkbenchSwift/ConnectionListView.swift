@@ -116,10 +116,13 @@ struct ConnectionListView: View {
 
 /// 多 Tab 场景下，点击 Tab 栏「+」时弹出的连接选择器。
 /// 选中某连接后以新 Tab 打开（同连接已打开则直接激活）。
+/// 同时支持新建 / 编辑 / 删除连接，避免开着会话时无法管理连接。
 struct ConnectionPickerSheet: View {
     @EnvironmentObject private var store: ConnectionStore
 
     var onOpen: (ConnectionConfig) -> Void
+    var onNew: () -> Void
+    var onEdit: (ConnectionConfig) -> Void
     var onClose: () -> Void
 
     var body: some View {
@@ -128,17 +131,30 @@ struct ConnectionPickerSheet: View {
                 Text("打开连接")
                     .font(.title3.weight(.semibold))
                 Spacer()
+                Button {
+                    onNew()
+                } label: {
+                    Label("新建连接", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
             }
             .padding()
 
             Divider()
 
             if store.connections.isEmpty {
-                ContentUnavailableView(
-                    "还没有连接",
-                    systemImage: "server.rack",
-                    description: Text("请先在连接选择界面新建一个 etcd 连接。")
-                )
+                ContentUnavailableView {
+                    Label("还没有连接", systemImage: "server.rack")
+                } description: {
+                    Text("点击「新建连接」添加一个 etcd 连接。")
+                } actions: {
+                    Button {
+                        onNew()
+                    } label: {
+                        Label("新建连接", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -169,6 +185,11 @@ struct ConnectionPickerSheet: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("打开") { onOpen(connection) }
+                                Button("编辑") { onEdit(connection) }
+                                Button("删除", role: .destructive) { store.delete(connection) }
+                            }
                         }
                     }
                     .padding(16)

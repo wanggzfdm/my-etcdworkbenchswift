@@ -197,7 +197,6 @@ private struct SettingsPage: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
                 Text("连接数：\(store.connections.count)")
-                Text("当前前缀：\(store.settings.keyPrefix.isEmpty ? "/" : store.settings.keyPrefix)")
                 Text("主题：\(store.settings.theme.title)")
             }
             .padding()
@@ -214,7 +213,6 @@ struct ContentView: View {
     @EnvironmentObject private var viewModel: AppViewModel
 
     @State private var editingConnection: ConnectionConfig?
-    @State private var showingConnectionEditor = false
     @State private var showingNewKey = false
     @State private var newKey = ""
     @State private var newValue = ""
@@ -229,11 +227,13 @@ struct ContentView: View {
 
     private var mainWorkspace: some View {
         VStack(spacing: 0) {
-            WorkspaceTabBar(workspace: viewModel) {
+            WorkspaceTabBar(workspace: viewModel, onNewTab: {
                 showingConnectionPicker = true
-            }
+            }, onGoHome: {
+                viewModel.showHome = true
+            })
             Divider()
-            if viewModel.activeSession != nil {
+            if !viewModel.showHome, viewModel.activeSession != nil {
                 // 用 HSplitView 而非 NavigationSplitView：纯左右分栏，没有折叠按钮和折叠动画，
                 // 从源头规避 NSOutlineView 在分栏折叠时逐帧重排导致的卡顿。保留拖拽调宽。
                 HSplitView {
@@ -244,7 +244,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // 无打开会话时，内容区铺满显示连接选择界面（不再用单独的欢迎首页）。
+                // 首页或无打开会话时，内容区铺满显示连接选择界面。
                 ConnectionListView(
                     onOpen: { openConnection($0) },
                     onNew: { showConnectionEditor(ConnectionConfig.empty.withNewID()) },
@@ -290,17 +290,15 @@ struct ContentView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingConnectionEditor) {
-            if let connection = editingConnection {
-                ConnectionEditor(
-                    connection: connection,
-                    onCancel: closeConnectionEditor
-                ) { updated in
-                    saveConnection(updated)
-                }
-                .frame(minWidth: 520, minHeight: 480)
-                .padding(24)
+        .sheet(item: $editingConnection) { connection in
+            ConnectionEditor(
+                connection: connection,
+                onCancel: closeConnectionEditor
+            ) { updated in
+                saveConnection(updated)
             }
+            .frame(minWidth: 520, minHeight: 480)
+            .padding(24)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsSheet(store: store) { showingSettings = false }
@@ -310,6 +308,14 @@ struct ContentView: View {
                 onOpen: { connection in
                     showingConnectionPicker = false
                     openConnection(connection)
+                },
+                onNew: {
+                    showingConnectionPicker = false
+                    showConnectionEditor(ConnectionConfig.empty.withNewID())
+                },
+                onEdit: { connection in
+                    showingConnectionPicker = false
+                    showConnectionEditor(connection)
                 },
                 onClose: { showingConnectionPicker = false }
             )
@@ -342,8 +348,15 @@ struct ContentView: View {
         if let session = viewModel.activeSession {
             KeyTreePane(
                 session: session,
+                keyPrefix: Binding(
+                    get: { session.activePrefix ?? "" },
+                    set: { _ in }
+                ),
                 keySearch: $keySearch,
-                onNewKey: { showingNewKey = true }
+                onNewKey: { showingNewKey = true },
+                onRefresh: {
+                    Task { await session.loadPrefix(session.activePrefix ?? "") }
+                }
             )
         } else {
             List {
@@ -357,12 +370,18 @@ struct ContentView: View {
     }
 
     private func showConnectionEditor(_ connection: ConnectionConfig) {
-        editingConnection = connection
-        showingConnectionEditor = true
+        // 若当前有 picker sheet 正在关闭，稍作延迟再弹出编辑器，避免两个 sheet 的
+        // present/dismiss 动画冲突导致编辑器 sheet 不弹出。
+        if editingConnection != nil {
+            editingConnection = connection
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            editingConnection = connection
+        }
     }
 
     private func closeConnectionEditor() {
-        showingConnectionEditor = false
         editingConnection = nil
     }
 
@@ -375,7 +394,7 @@ struct ContentView: View {
     private func openConnection(_ connection: ConnectionConfig) {
         store.selectedConnection = connection
         closeConnectionEditor()
-        viewModel.openSession(connection, prefix: store.settings.keyPrefix)
+        viewModel.openSession(connection, prefix: connection.keyPrefix)
     }
 
     private func showNotice(_ message: String) {
@@ -392,10 +411,11 @@ struct ContentView: View {
 // MARK: - 键目录树面板（观察单个会话）
 
 private struct KeyTreePane: View {
-    @EnvironmentObject private var store: ConnectionStore
     @ObservedObject var session: ConnectionSession
+    @Binding var keyPrefix: String
     @Binding var keySearch: String
     var onNewKey: () -> Void
+    var onRefresh: () -> Void
 
     var body: some View {
         let visibleItems = filteredKeyItems
@@ -406,20 +426,13 @@ private struct KeyTreePane: View {
                 Text("前缀")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("/", text: Binding(
-                    get: { store.settings.keyPrefix },
-                    set: {
-                        store.settings.keyPrefix = $0
-                        store.saveSettings()
-                    }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    Task { await session.loadPrefix(store.settings.keyPrefix) }
-                }
+                TextField("/", text: $keyPrefix)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(true)
+                    .help("在连接设置中配置前缀")
 
                 Button {
-                    Task { await session.loadPrefix(store.settings.keyPrefix) }
+                    onRefresh()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -660,6 +673,7 @@ struct ConnectionEditor: View {
     @State private var password: String
     @State private var useTLS: Bool
     @State private var skipTLSVerify: Bool
+    @State private var keyPrefix: String
     @State private var isTesting = false
     @State private var testResult: TestResult?
     var onCancel: () -> Void
@@ -679,6 +693,7 @@ struct ConnectionEditor: View {
         _password = State(initialValue: connection.password)
         _useTLS = State(initialValue: connection.useTLS)
         _skipTLSVerify = State(initialValue: connection.skipTLSVerify)
+        _keyPrefix = State(initialValue: connection.keyPrefix)
         self.onCancel = onCancel
         self.onSave = onSave
     }
@@ -701,6 +716,9 @@ struct ConnectionEditor: View {
                 }
                 labeledField("命名空间") {
                     AppKitTextField(text: $namespace, placeholder: "可选")
+                }
+                labeledField("键前缀") {
+                    AppKitTextField(text: $keyPrefix, placeholder: "可选，例如 /myapp/")
                 }
                 labeledField("用户名") {
                     AppKitTextField(text: $username, placeholder: "可选")
@@ -764,7 +782,8 @@ struct ConnectionEditor: View {
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             password: password,
             useTLS: useTLS,
-            skipTLSVerify: skipTLSVerify
+            skipTLSVerify: skipTLSVerify,
+            keyPrefix: keyPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
