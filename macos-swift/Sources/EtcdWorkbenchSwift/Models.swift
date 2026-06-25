@@ -83,19 +83,23 @@ struct AppSettings: Codable, Equatable {
     var selectedConnectionID: UUID?
     var keyPrefix: String
     var theme: AppTheme
+    /// 搜索结果自动展开阈值，结果数量 ≤ 此值时自动展开目录树
+    var searchExpandThreshold: Int
 
-    static let `default` = AppSettings(selectedConnectionID: nil, keyPrefix: "", theme: .system)
+    static let `default` = AppSettings(selectedConnectionID: nil, keyPrefix: "", theme: .system, searchExpandThreshold: 20)
 
     enum CodingKeys: String, CodingKey {
         case selectedConnectionID
         case keyPrefix
         case theme
+        case searchExpandThreshold
     }
 
-    init(selectedConnectionID: UUID?, keyPrefix: String, theme: AppTheme = .system) {
+    init(selectedConnectionID: UUID?, keyPrefix: String, theme: AppTheme = .system, searchExpandThreshold: Int = 20) {
         self.selectedConnectionID = selectedConnectionID
         self.keyPrefix = keyPrefix
         self.theme = theme
+        self.searchExpandThreshold = searchExpandThreshold
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +107,7 @@ struct AppSettings: Codable, Equatable {
         selectedConnectionID = try container.decodeIfPresent(UUID.self, forKey: .selectedConnectionID)
         keyPrefix = try container.decodeIfPresent(String.self, forKey: .keyPrefix) ?? ""
         theme = try container.decodeIfPresent(AppTheme.self, forKey: .theme) ?? .system
+        searchExpandThreshold = try container.decodeIfPresent(Int.self, forKey: .searchExpandThreshold) ?? 20
     }
 }
 

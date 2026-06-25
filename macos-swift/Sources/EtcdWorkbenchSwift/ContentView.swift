@@ -191,6 +191,29 @@ private struct SettingsPage: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             VStack(alignment: .leading, spacing: 10) {
+                Text("搜索")
+                    .font(.headline)
+                HStack {
+                    Text("自动展开阈值")
+                    TextField("", value: Binding(
+                        get: { store.settings.searchExpandThreshold },
+                        set: { store.settings.searchExpandThreshold = $0 }
+                    ), format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                    Text("个键")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                Text("搜索结果数量 ≤ 此值时自动展开目录树，设为 0 则始终折叠。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(.quaternary.opacity(0.25))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 10) {
                 Text("本地存储")
                     .font(.headline)
                 Text("~/Library/Application Support/Etcd Workbench Swift/")
@@ -351,6 +374,7 @@ struct ContentView: View {
                     get: { session.activePrefix ?? "" },
                     set: { _ in }
                 ),
+                expandAll: session.isSearchMode && session.searchResults.count <= store.settings.searchExpandThreshold,
                 onNewKey: { showingNewKey = true },
                 onRefresh: {
                     Task { await session.loadPrefix(session.activePrefix ?? "") }
@@ -411,6 +435,7 @@ struct ContentView: View {
 private struct KeyTreePane: View {
     @ObservedObject var session: ConnectionSession
     @Binding var keyPrefix: String
+    var expandAll: Bool
     var onNewKey: () -> Void
     var onRefresh: () -> Void
 
@@ -533,7 +558,7 @@ private struct KeyTreePane: View {
                 KeyOutlineView(
                     nodes: outlineNodes,
                     selectedKey: session.selectedKey,
-                    expandAll: session.isSearchMode,
+                    expandAll: expandAll,
                     onSelect: { selectKey($0) },
                     onCopy: { key in
                         NSPasteboard.general.clearContents()
@@ -695,8 +720,11 @@ struct SettingsSheet: View {
             Divider()
             HStack {
                 Spacer()
-                Button("关闭") { onClose() }
-                    .keyboardShortcut(.cancelAction)
+                Button("关闭") {
+                    store.saveSettings()
+                    onClose()
+                }
+                .keyboardShortcut(.cancelAction)
             }
             .padding()
         }
