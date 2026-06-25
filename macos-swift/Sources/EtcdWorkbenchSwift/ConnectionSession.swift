@@ -18,9 +18,19 @@ final class ConnectionSession: ObservableObject, Identifiable {
     @Published var canLoadMore = false
     @Published var activePrefix: String = ""
 
+    // 搜索相关属性
+    @Published var searchResults: [KeyValueItem] = []
+    @Published var searchQuery: String = ""
+    @Published var isSearching = false
+    @Published var searchHasMore = false
+    @Published var searchTotalCount = 0
+    @Published var isSearchMode = false
+
     private var client: EtcdHTTPClient?
     private var nextCursor: String?
     private let pageSize = 500
+    private var searchCursor: String?
+    private let searchPageSize = 100
 
     init(config: ConnectionConfig) {
         self.config = config
@@ -79,7 +89,9 @@ final class ConnectionSession: ObservableObject, Identifiable {
     func saveSelected() async {
         await run {
             guard let key = self.selectedKey else { throw AppError.missingConnection }
-            try await self.client?.put(key: key, value: self.editorText)
+            // 验证并压缩 JSON
+            let valueToSave = try Self.validateAndCompactJSON(self.editorText)
+            try await self.client?.put(key: key, value: valueToSave)
             try await self.reload(prefix: "")
             self.status = "已保存 \(key)"
         }
@@ -134,6 +146,70 @@ final class ConnectionSession: ObservableObject, Identifiable {
         }
     }
 
+    /// 执行服务端前缀搜索
+    func search(prefix: String) async {
+        await run {
+            guard let client = self.client else { throw AppError.missingConnection }
+            guard !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self.isSearchMode = false
+                self.searchResults = []
+                return
+            }
+
+            self.isSearching = true
+            self.isSearchMode = true
+
+            let result = try await client.search(
+                prefix: prefix,
+                cursor: nil,
+                limit: self.searchPageSize
+            )
+
+            self.searchResults = result.items
+            self.searchTotalCount = result.totalCount
+            self.searchHasMore = result.hasMore
+            self.searchCursor = result.nextCursor
+
+            self.status = "搜索到 \(result.items.count) 个键"
+
+            self.isSearching = false
+        }
+    }
+
+    /// 加载更多搜索结果
+    func loadMoreSearchResults() async {
+        await run {
+            guard let client = self.client else { throw AppError.missingConnection }
+            guard let cursor = self.searchCursor, self.searchHasMore else { return }
+
+            self.isSearching = true
+
+            let result = try await client.search(
+                prefix: self.searchQuery,
+                cursor: cursor,
+                limit: self.searchPageSize
+            )
+
+            self.searchResults.append(contentsOf: result.items)
+            self.searchHasMore = result.hasMore
+            self.searchCursor = result.nextCursor
+
+            self.status = "搜索到 \(self.searchResults.count) 个键"
+
+            self.isSearching = false
+        }
+    }
+
+    /// 退出搜索模式
+    func exitSearchMode() {
+        isSearchMode = false
+        searchResults = []
+        searchQuery = ""
+        searchCursor = nil
+        searchHasMore = false
+        searchTotalCount = 0
+    }
+
     private func run(_ operation: @escaping () async throws -> Void) async {
         isLoading = true
         errorMessage = nil
@@ -166,5 +242,32 @@ final class ConnectionSession: ObservableObject, Identifiable {
             return text
         }
         return pretty
+    }
+
+    /// 验证 JSON 格式并压缩为单行
+    /// - 如果内容是合法 JSON，返回压缩后的单行格式
+    /// - 如果内容不是 JSON（如纯文本），直接返回原文
+    /// - 如果内容看起来像 JSON 但格式非法，抛出错误
+    private static func validateAndCompactJSON(_ text: String) throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 检查是否看起来像 JSON（以 { 或 [ 开头）
+        let looksLikeJSON = trimmed.hasPrefix("{") || trimmed.hasPrefix("[")
+        
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object) else {
+            // 不是有效的 JSON
+            if looksLikeJSON {
+                // 看起来像 JSON 但格式非法，抛出错误
+                throw AppError.etcd("JSON 格式不正确，请检查语法")
+            }
+            // 不是 JSON 内容（如纯文本），直接返回
+            return text
+        }
+        
+        // 是有效的 JSON，压缩为单行格式
+        let compactData = try JSONSerialization.data(withJSONObject: object, options: [])
+        return String(data: compactData, encoding: .utf8) ?? text
     }
 }

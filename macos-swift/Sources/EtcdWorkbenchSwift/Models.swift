@@ -55,6 +55,14 @@ struct KeyListPage {
     var hasMore: Bool
 }
 
+/// 服务端搜索结果
+struct SearchResult {
+    var items: [KeyValueItem]
+    var totalCount: Int
+    var hasMore: Bool
+    var nextCursor: String?
+}
+
 enum AppTheme: String, Codable, CaseIterable, Identifiable {
     case system
     case light
@@ -110,7 +118,7 @@ enum AppError: LocalizedError {
         case .invalidURL:
             return "连接地址无效。"
         case .invalidResponse:
-            return "etcd 返回了无效响应。"
+            return "etcd 返回了非 JSON 格式的数据，请确认端口和协议设置是否正确。"
         case .httpStatus(let code, let body):
             return "HTTP \(code): \(body)"
         case .etcd(let message):

@@ -6,6 +6,7 @@ final class EtcdHTTPClient {
     private let session: URLSession
     private let delegate: TLSBypassDelegate
     private var authToken: String?
+    private var isAuthenticating = false
 
     init(connection: ConnectionConfig) {
         self.connection = connection
@@ -20,9 +21,19 @@ final class EtcdHTTPClient {
         if !connection.username.isEmpty {
             _ = try await authenticateIfNeeded()
         }
-        let data = try await request(path: "/version", body: nil, authenticate: true)
-        let response = try JSONDecoder().decode(VersionResponse.self, from: data)
-        return response.etcdserver
+        let data = try await requestData(path: "/version", body: nil)
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return "unknown"
+        }
+        // 灵活获取etcdserver字段
+        if let version = json["etcdserver"] as? String {
+            return version
+        } else if let version = json["etcdserver"] as? Double {
+            return String(version)
+        } else if let version = json["etcdserver"] as? Int {
+            return String(version)
+        }
+        return "unknown"
     }
 
     func list(prefix: String) async throws -> [KeyValueItem] {
@@ -34,74 +45,75 @@ final class EtcdHTTPClient {
         let initialStart = normalizedPrefix.isEmpty ? "\0" : namespaced(normalizedPrefix)
         let rangeStart = cursor.map { $0 + "\0" } ?? initialStart
         let rangeEnd = normalizedPrefix.isEmpty ? "\0" : prefixEnd(namespaced(normalizedPrefix))
-        let payload = RangeRequest(
-            key: encodeKey(rangeStart),
-            rangeEnd: encodeKey(rangeEnd),
-            limit: limit,
-            sortOrder: "ASCEND",
-            sortTarget: "KEY"
-        )
-        let data = try await request(path: "/v3/kv/range", body: payload)
-        let response = try JSONDecoder().decode(RangeResponse.self, from: data)
-        let items: [KeyValueItem] = response.kvs?.compactMap { kv in
-            guard let keyData = Data(base64Encoded: kv.key),
-                  let key = String(data: keyData, encoding: .utf8),
-                  let value = Data(base64Encoded: kv.value ?? "") else {
-                return nil
-            }
-            return KeyValueItem(
-                key: stripNamespace(key),
-                rawKey: key,
-                value: value,
-                createRevision: kv.createRevision ?? "",
-                modRevision: kv.modRevision ?? "",
-                version: kv.version ?? "",
-                lease: kv.lease ?? ""
-            )
-        } ?? []
+        let payload: [String: Any] = [
+            "key": encodeKey(rangeStart),
+            "range_end": encodeKey(rangeEnd),
+            "limit": limit,
+            "sort_order": "ASCEND",
+            "sort_target": "KEY"
+        ]
+        let data = try await requestJSON(path: "/v3/kv/range", body: payload)
+        let items = parseKVs(from: data)
+        let hasMore = data["more"] as? Bool ?? false
         return KeyListPage(
             items: items,
             nextCursor: items.last?.rawKey,
-            hasMore: response.more ?? false
+            hasMore: hasMore
+        )
+    }
+
+    func search(prefix: String, cursor: String?, limit: Int) async throws -> SearchResult {
+        let normalizedPrefix = normalizePrefix(prefix)
+        guard !normalizedPrefix.isEmpty else {
+            return SearchResult(items: [], totalCount: 0, hasMore: false, nextCursor: nil)
+        }
+
+        let rangeStart = cursor.map { $0 + "\0" } ?? namespaced(normalizedPrefix)
+        let rangeEnd = prefixEnd(namespaced(normalizedPrefix))
+
+        let payload: [String: Any] = [
+            "key": encodeKey(rangeStart),
+            "range_end": encodeKey(rangeEnd),
+            "limit": limit,
+            "sort_order": "ASCEND",
+            "sort_target": "KEY"
+        ]
+
+        let data = try await requestJSON(path: "/v3/kv/range", body: payload)
+        let items = parseKVs(from: data)
+        let hasMore = data["more"] as? Bool ?? false
+        let count = parseInt(data["count"])
+
+        return SearchResult(
+            items: items,
+            totalCount: count,
+            hasMore: hasMore,
+            nextCursor: items.last?.rawKey
         )
     }
 
     func get(key: String) async throws -> KeyValueItem? {
-        let payload = RangeRequest(key: encodeKey(namespaced(key)))
-        let data = try await request(path: "/v3/kv/range", body: payload)
-        let response = try JSONDecoder().decode(RangeResponse.self, from: data)
-        guard let kv = response.kvs?.first,
-              let keyData = Data(base64Encoded: kv.key),
-              let fullKey = String(data: keyData, encoding: .utf8),
-              let value = Data(base64Encoded: kv.value ?? "") else {
-            return nil
-        }
-        return KeyValueItem(
-            key: stripNamespace(fullKey),
-            rawKey: fullKey,
-            value: value,
-            createRevision: kv.createRevision ?? "",
-            modRevision: kv.modRevision ?? "",
-            version: kv.version ?? "",
-            lease: kv.lease ?? ""
-        )
+        let payload: [String: Any] = ["key": encodeKey(namespaced(key))]
+        let data = try await requestJSON(path: "/v3/kv/range", body: payload)
+        let items = parseKVs(from: data)
+        return items.first
     }
 
     func put(key: String, value: String) async throws {
-        let request = PutRequest(
-            key: encodeKey(namespaced(key)),
-            value: Data(value.utf8).base64EncodedString()
-        )
-        _ = try await self.request(path: "/v3/kv/put", body: request)
+        let payload: [String: Any] = [
+            "key": encodeKey(namespaced(key)),
+            "value": Data(value.utf8).base64EncodedString()
+        ]
+        _ = try await requestJSON(path: "/v3/kv/put", body: payload)
     }
 
     func delete(key: String) async throws {
-        let request = DeleteRangeRequest(key: encodeKey(namespaced(key)))
-        _ = try await self.request(path: "/v3/kv/deleterange", body: request)
+        let payload: [String: Any] = ["key": encodeKey(namespaced(key))]
+        _ = try await requestJSON(path: "/v3/kv/deleterange", body: payload)
     }
 
-    func rawJSON(path: String, body: EmptyRequest = EmptyRequest()) async throws -> String {
-        let data = try await request(path: path, body: body)
+    func rawJSON(path: String, body: [String: Any] = [:]) async throws -> String {
+        let data = try await requestData(path: path, body: body.isEmpty ? nil : body)
         guard let object = try? JSONSerialization.jsonObject(with: data),
               JSONSerialization.isValidJSONObject(object),
               let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
@@ -111,26 +123,84 @@ final class EtcdHTTPClient {
         return text
     }
 
-    private func request<T: Encodable>(path: String, body: T?) async throws -> Data {
-        let payload = try body.map { try JSONEncoder().encode($0) }
-        return try await request(path: path, body: payload, authenticate: true)
+    // MARK: - JSON解析辅助方法
+
+    private func parseKVs(from json: [String: Any]) -> [KeyValueItem] {
+        guard let kvs = json["kvs"] as? [[String: Any]] else {
+            return []
+        }
+        return kvs.compactMap { parseKV(from: $0) }
     }
 
-    private func request(path: String, body: Data?, authenticate: Bool) async throws -> Data {
+    private func parseKV(from dict: [String: Any]) -> KeyValueItem? {
+        guard let keyBase64 = dict["key"] as? String,
+              let keyData = Data(base64Encoded: keyBase64),
+              let key = String(data: keyData, encoding: .utf8) else {
+            return nil
+        }
+
+        let valueBase64 = dict["value"] as? String ?? ""
+        let value = Data(base64Encoded: valueBase64) ?? Data()
+
+        return KeyValueItem(
+            key: stripNamespace(key),
+            rawKey: key,
+            value: value,
+            createRevision: "\(parseInt(dict["create_revision"]))",
+            modRevision: "\(parseInt(dict["mod_revision"]))",
+            version: "\(parseInt(dict["version"]))",
+            lease: "\(parseInt(dict["lease"]))"
+        )
+    }
+
+    private func parseInt(_ value: Any?) -> Int {
+        if let i = value as? Int {
+            return i
+        }
+        if let d = value as? Double {
+            return Int(d)
+        }
+        if let s = value as? String, let i = Int(s) {
+            return i
+        }
+        return 0
+    }
+
+    // MARK: - 网络请求
+
+    private func requestJSON(path: String, body: [String: Any]) async throws -> [String: Any] {
+        let data = try await requestData(path: path, body: body)
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw AppError.invalidResponse
+        }
+        // 检查etcd错误
+        if let error = json["error"] as? String, !error.isEmpty {
+            throw AppError.etcd(error)
+        }
+        return json
+    }
+
+    private func requestData(path: String, body: [String: Any]?) async throws -> Data {
         guard let baseURL = connection.baseURL,
               let url = URL(string: path, relativeTo: baseURL) else {
             throw AppError.invalidURL
         }
 
+        // 带有自动重试的请求（处理 token 过期）
+        return try await performRequest(url: url, body: body, shouldRetryOnAuthError: true)
+    }
+
+    /// 执行 HTTP 请求，当遇到 auth token 过期时自动重试一次
+    private func performRequest(url: URL, body: [String: Any]?, shouldRetryOnAuthError: Bool) async throws -> Data {
         var request = URLRequest(url: url)
         if let body {
             request.httpMethod = "POST"
-            request.httpBody = body
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         } else {
             request.httpMethod = "GET"
         }
-        if authenticate, !connection.username.isEmpty {
+        if !connection.username.isEmpty && !isAuthenticating {
             let token = try await authenticateIfNeeded()
             request.setValue(token, forHTTPHeaderField: "Authorization")
         }
@@ -139,33 +209,71 @@ final class EtcdHTTPClient {
         guard let http = response as? HTTPURLResponse else {
             throw AppError.invalidResponse
         }
+
+        // 检查是否为 auth token 过期错误（HTTP 401）
+        if http.statusCode == 401 && shouldRetryOnAuthError {
+            let bodyText = String(data: data, encoding: .utf8) ?? ""
+            if bodyText.contains("invalid auth token") {
+                NSLog("[EtcdHTTPClient] Auth token expired, clearing cache and retrying...")
+                // 清除过期的 token
+                authToken = nil
+                // 重新认证并重试请求（只重试一次）
+                if !connection.username.isEmpty {
+                    _ = try await authenticateIfNeeded()
+                    return try await performRequest(url: url, body: body, shouldRetryOnAuthError: false)
+                }
+            }
+        }
+
         guard (200..<300).contains(http.statusCode) else {
-            throw AppError.httpStatus(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+            let bodyText = String(data: data, encoding: .utf8) ?? ""
+            throw AppError.httpStatus(http.statusCode, bodyText)
         }
-        if let error = try? JSONDecoder().decode(EtcdErrorResponse.self, from: data),
-           !error.error.isEmpty {
-            throw AppError.etcd(error.error)
+        // 调试日志：打印非 JSON 响应信息
+        let contentType = http.value(forHTTPHeaderField: "Content-Type") ?? "unknown"
+        if !contentType.contains("json") {
+            let preview = String(data: data.prefix(200), encoding: .utf8) ?? "<binary>"
+            NSLog("[EtcdHTTPClient] Non-JSON response — Content-Type: %@, body preview: %@", contentType, preview)
         }
+
         return data
     }
 
+    /// 认证请求（不经过重试逻辑，避免无限递归）
     private func authenticateIfNeeded() async throws -> String {
         if let authToken {
             return authToken
         }
 
-        let payload = try JSONEncoder().encode(AuthRequest(
-            name: connection.username,
-            password: connection.password
-        ))
-        let data = try await request(
-            path: "/v3/auth/authenticate",
-            body: payload,
-            authenticate: false
-        )
-        let response = try JSONDecoder().decode(AuthResponse.self, from: data)
-        authToken = response.token
-        return response.token
+        guard let baseURL = connection.baseURL,
+              let url = URL(string: "/v3/auth/authenticate", relativeTo: baseURL) else {
+            throw AppError.invalidURL
+        }
+
+        let payload: [String: Any] = [
+            "name": connection.username,
+            "password": connection.password
+        ]
+        isAuthenticating = true
+        defer { isAuthenticating = false }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw AppError.etcd("认证失败")
+        }
+
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let token = json["token"] as? String else {
+            throw AppError.etcd("认证失败")
+        }
+        authToken = token
+        return token
     }
 
     private func namespaced(_ key: String) -> String {
@@ -205,6 +313,8 @@ final class EtcdHTTPClient {
     }
 }
 
+// MARK: - 网络相关
+
 private final class TLSBypassDelegate: NSObject, URLSessionDelegate {
     private let skipTLSVerify: Bool
 
@@ -222,72 +332,5 @@ private final class TLSBypassDelegate: NSObject, URLSessionDelegate {
             return (.performDefaultHandling, nil)
         }
         return (.useCredential, URLCredential(trust: trust))
-    }
-}
-
-private struct VersionResponse: Decodable {
-    let etcdserver: String
-}
-
-private struct EtcdErrorResponse: Decodable {
-    let error: String
-}
-
-struct EmptyRequest: Encodable {}
-
-private struct AuthRequest: Encodable {
-    var name: String
-    var password: String
-}
-
-private struct AuthResponse: Decodable {
-    var token: String
-}
-
-private struct RangeRequest: Encodable {
-    var key: String
-    var rangeEnd: String?
-    var limit: Int?
-    var sortOrder: String?
-    var sortTarget: String?
-
-    enum CodingKeys: String, CodingKey {
-        case key
-        case rangeEnd = "range_end"
-        case limit
-        case sortOrder = "sort_order"
-        case sortTarget = "sort_target"
-    }
-}
-
-private struct PutRequest: Encodable {
-    var key: String
-    var value: String
-}
-
-private struct DeleteRangeRequest: Encodable {
-    var key: String
-}
-
-private struct RangeResponse: Decodable {
-    var kvs: [KV]?
-    var more: Bool?
-}
-
-private struct KV: Decodable {
-    var key: String
-    var value: String?
-    var createRevision: String?
-    var modRevision: String?
-    var version: String?
-    var lease: String?
-
-    enum CodingKeys: String, CodingKey {
-        case key
-        case value
-        case createRevision = "create_revision"
-        case modRevision = "mod_revision"
-        case version
-        case lease
     }
 }

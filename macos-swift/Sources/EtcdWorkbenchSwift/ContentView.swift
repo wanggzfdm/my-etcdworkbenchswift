@@ -217,7 +217,6 @@ struct ContentView: View {
     @State private var newKey = ""
     @State private var newValue = ""
     @State private var noticeMessage: String?
-    @State private var keySearch = ""
     @State private var showingSettings = false
     @State private var showingConnectionPicker = false
 
@@ -352,7 +351,6 @@ struct ContentView: View {
                     get: { session.activePrefix ?? "" },
                     set: { _ in }
                 ),
-                keySearch: $keySearch,
                 onNewKey: { showingNewKey = true },
                 onRefresh: {
                     Task { await session.loadPrefix(session.activePrefix ?? "") }
@@ -413,7 +411,6 @@ struct ContentView: View {
 private struct KeyTreePane: View {
     @ObservedObject var session: ConnectionSession
     @Binding var keyPrefix: String
-    @Binding var keySearch: String
     var onNewKey: () -> Void
     var onRefresh: () -> Void
 
@@ -461,17 +458,31 @@ private struct KeyTreePane: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("搜索已加载的键", text: $keySearch)
+                TextField("搜索键（前缀匹配）", text: $session.searchQuery)
                     .textFieldStyle(.roundedBorder)
-                if !keySearch.isEmpty {
+                    .onSubmit {
+                        // 回车触发搜索
+                        performServerSearch()
+                    }
+
+                if !session.searchQuery.isEmpty {
                     Button {
-                        keySearch = ""
+                        session.searchQuery = ""
+                        session.exitSearchMode()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                 }
+
+                Button {
+                    performServerSearch()
+                } label: {
+                    Image(systemName: "magnifyingglass.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .disabled(session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.isSearching)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
@@ -479,11 +490,28 @@ private struct KeyTreePane: View {
             Divider()
 
             HStack {
-                Text("\(visibleItems.count) / \(session.items.count) loaded keys")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if session.isSearchMode {
+                    Text("搜索结果: \(session.searchResults.count) / \(session.searchTotalCount) 个键")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(visibleItems.count) / \(session.items.count) loaded keys")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                if session.canLoadMore {
+
+                if session.isSearching {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else if session.isSearchMode && session.searchHasMore {
+                    Button("加载更多") {
+                        Task {
+                            await session.loadMoreSearchResults()
+                        }
+                    }
+                    .font(.caption)
+                } else if !session.isSearchMode && session.canLoadMore {
                     Text("还有更多")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -495,8 +523,8 @@ private struct KeyTreePane: View {
             if outlineNodes.isEmpty {
                 List {
                     ContentUnavailableView(
-                        session.isConnected ? "没有已加载的键" : "请打开一个连接",
-                        systemImage: session.isConnected ? "folder" : "bolt.horizontal"
+                        session.isSearchMode ? "没有匹配的键" : (session.isConnected ? "没有已加载的键" : "请打开一个连接"),
+                        systemImage: session.isSearchMode ? "magnifyingglass" : (session.isConnected ? "folder" : "bolt.horizontal")
                     )
                 }
                 .listStyle(.sidebar)
@@ -505,7 +533,7 @@ private struct KeyTreePane: View {
                 KeyOutlineView(
                     nodes: outlineNodes,
                     selectedKey: session.selectedKey,
-                    expandAll: !keySearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    expandAll: session.isSearchMode,
                     onSelect: { selectKey($0) },
                     onCopy: { key in
                         NSPasteboard.general.clearContents()
@@ -518,7 +546,7 @@ private struct KeyTreePane: View {
                 )
             }
 
-            if session.canLoadMore {
+            if !session.isSearchMode && session.canLoadMore {
                 Divider()
                 Button {
                     Task { await session.loadMore() }
@@ -534,7 +562,10 @@ private struct KeyTreePane: View {
     }
 
     private var filteredKeyItems: [KeyValueItem] {
-        let query = keySearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        if session.isSearchMode {
+            return session.searchResults
+        }
+        let query = session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return session.items }
         return session.items.filter { item in
             item.key.localizedCaseInsensitiveContains(query) ||
@@ -543,8 +574,18 @@ private struct KeyTreePane: View {
     }
 
     private func selectKey(_ key: String) {
-        guard let item = session.items.first(where: { $0.key == key }) else { return }
+        let items = session.isSearchMode ? session.searchResults : session.items
+        guard let item = items.first(where: { $0.key == key }) else { return }
         session.select(item)
+    }
+
+    private func performServerSearch() {
+        let query = session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        session.searchQuery = query
+        Task {
+            await session.search(prefix: query)
+        }
     }
 }
 
