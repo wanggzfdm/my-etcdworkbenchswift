@@ -10,12 +10,17 @@ BINARY="$ROOT_DIR/.build/arm64-apple-macosx/debug/EtcdWorkbenchSwift"
 APP="$ROOT_DIR/.build/debug-app/EtcdWorkbenchSwift.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
 
 rm -rf "$APP"
 mkdir -p "$MACOS"
+mkdir -p "$RESOURCES"
 
 cp "$BINARY" "$MACOS/EtcdWorkbenchSwift"
 chmod +x "$MACOS/EtcdWorkbenchSwift"
+
+# 复制图标资源
+cp "$ROOT_DIR/Resources/icon.icns" "$RESOURCES/icon.icns"
 
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +32,8 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>EtcdWorkbenchSwift</string>
+  <key>CFBundleIconFile</key>
+  <string>icon</string>
   <key>CFBundleIdentifier</key>
   <string>com.etcdworkbench.swift.debug</string>
   <key>CFBundleInfoDictionaryVersion</key>
