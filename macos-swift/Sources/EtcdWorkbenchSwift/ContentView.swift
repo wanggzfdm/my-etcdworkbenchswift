@@ -567,6 +567,9 @@ private struct KeyTreePane: View {
                     onCopyValue: { item in
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(item.textValue, forType: .string)
+                    },
+                    onRefreshKey: { key in
+                        Task { await session.refreshKey(key) }
                     }
                 )
             }

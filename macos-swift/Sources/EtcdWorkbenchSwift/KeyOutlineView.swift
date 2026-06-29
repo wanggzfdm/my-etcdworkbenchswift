@@ -98,9 +98,10 @@ struct KeyOutlineView: NSViewRepresentable {
     var onSelect: (String) -> Void
     var onCopy: (String) -> Void
     var onCopyValue: (KeyValueItem) -> Void
+    var onRefreshKey: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onSelect: onSelect, onCopy: onCopy, onCopyValue: onCopyValue)
+        Coordinator(onSelect: onSelect, onCopy: onCopy, onCopyValue: onCopyValue, onRefreshKey: onRefreshKey)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -115,6 +116,8 @@ struct KeyOutlineView: NSViewRepresentable {
         outline.allowsEmptySelection = true
         outline.allowsMultipleSelection = false
         outline.focusRingType = .none
+        outline.target = context.coordinator
+        outline.action = #selector(Coordinator.outlineRowClicked(_:))
         if #available(macOS 11.0, *) {
             outline.style = .sourceList
         } else {
@@ -134,6 +137,9 @@ struct KeyOutlineView: NSViewRepresentable {
         let copyValueItem = NSMenuItem(title: "复制值", action: #selector(Coordinator.copyValue(_:)), keyEquivalent: "")
         copyValueItem.target = context.coordinator
         menu.addItem(copyValueItem)
+        let refreshKeyItem = NSMenuItem(title: "刷新键", action: #selector(Coordinator.refreshKey(_:)), keyEquivalent: "")
+        refreshKeyItem.target = context.coordinator
+        menu.addItem(refreshKeyItem)
         outline.menu = menu
 
         let scroll = NSScrollView()
@@ -151,6 +157,7 @@ struct KeyOutlineView: NSViewRepresentable {
         context.coordinator.onSelect = onSelect
         context.coordinator.onCopy = onCopy
         context.coordinator.onCopyValue = onCopyValue
+        context.coordinator.onRefreshKey = onRefreshKey
         context.coordinator.apply(nodes: nodes, selectedKey: selectedKey, expandAll: expandAll, initial: false)
     }
 
@@ -162,6 +169,7 @@ struct KeyOutlineView: NSViewRepresentable {
         var onSelect: (String) -> Void
         var onCopy: (String) -> Void
         var onCopyValue: (KeyValueItem) -> Void
+        var onRefreshKey: (String) -> Void
 
         private var roots: [KeyOutlineNode] = []
         private var signature: String = ""
@@ -171,11 +179,13 @@ struct KeyOutlineView: NSViewRepresentable {
         init(
             onSelect: @escaping (String) -> Void,
             onCopy: @escaping (String) -> Void,
-            onCopyValue: @escaping (KeyValueItem) -> Void
+            onCopyValue: @escaping (KeyValueItem) -> Void,
+            onRefreshKey: @escaping (String) -> Void
         ) {
             self.onSelect = onSelect
             self.onCopy = onCopy
             self.onCopyValue = onCopyValue
+            self.onRefreshKey = onRefreshKey
         }
 
         /// 仅在树结构变化时 reloadData，避免打断 NSOutlineView 自带的展开动画。
@@ -351,6 +361,8 @@ struct KeyOutlineView: NSViewRepresentable {
                     item.isEnabled = !node.path.isEmpty
                 case #selector(copyValue(_:)):
                     item.isEnabled = node.isLeaf && node.item != nil
+                case #selector(refreshKey(_:)):
+                    item.isEnabled = node.isLeaf
                 default:
                     item.isEnabled = true
                 }
@@ -373,6 +385,22 @@ struct KeyOutlineView: NSViewRepresentable {
         @objc func copyValue(_ sender: Any?) {
             guard let node = targetNode(), let item = node.item else { return }
             onCopyValue(item)
+        }
+
+        @objc func refreshKey(_ sender: Any?) {
+            guard let node = targetNode(), node.isLeaf else { return }
+            onRefreshKey(node.path)
+        }
+
+        @objc func outlineRowClicked(_ sender: NSOutlineView) {
+            let row = sender.clickedRow
+            guard row >= 0, let node = sender.item(atRow: row) as? KeyOutlineNode,
+                  !node.isLeaf else { return }
+            if sender.isItemExpanded(node) {
+                sender.collapseItem(node)
+            } else {
+                sender.expandItem(node)
+            }
         }
     }
 }
@@ -397,7 +425,7 @@ final class KeyCellView: NSTableCellView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
-        label.font = .systemFont(ofSize: NSFont.systemFontSize)
+        label.font = .systemFont(ofSize: 16)
         label.cell?.usesSingleLineMode = true
         addSubview(icon)
         addSubview(label)
@@ -407,9 +435,9 @@ final class KeyCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+            icon.widthAnchor.constraint(equalToConstant: 20),
+            icon.heightAnchor.constraint(equalToConstant: 20),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             label.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])

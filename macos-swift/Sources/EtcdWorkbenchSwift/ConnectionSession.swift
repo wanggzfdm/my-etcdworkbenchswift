@@ -28,9 +28,9 @@ final class ConnectionSession: ObservableObject, Identifiable {
 
     private var client: EtcdHTTPClient?
     private var nextCursor: String?
-    private let pageSize = 500
+    private let pageSize = 5000
     private var searchCursor: String?
-    private let searchPageSize = 100
+    private let searchPageSize = 5000
 
     init(config: ConnectionConfig) {
         self.config = config
@@ -116,6 +116,23 @@ final class ConnectionSession: ObservableObject, Identifiable {
             try await client.delete(key: key)
             try await self.reload(prefix: "")
             self.status = "已删除 \(key)"
+        }
+    }
+
+    func refreshKey(_ key: String) async {
+        await run {
+            guard let client = self.client else { throw AppError.missingConnection }
+            guard let newItem = try await client.get(key: key) else {
+                self.status = "键 \(key) 不存在或已被删除"
+                return
+            }
+            if let index = self.items.firstIndex(where: { $0.key == key }) {
+                self.items[index] = newItem
+            }
+            if self.selectedKey == key {
+                self.applyEditorValue(newItem)
+            }
+            self.status = "已刷新 \(key)"
         }
     }
 
